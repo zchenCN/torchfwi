@@ -26,7 +26,6 @@ def ricker(dt, nt, peak_time, dominant_freq):
 class Solver:
     def __init__(self, rho, vp, vs, 
                 h, dt, nt, peak_time, dominant_freq,
-                # sources_xz, 
                 receivers_xz, 
                 pml_width=10, pad_width=10):
         
@@ -59,31 +58,35 @@ class Solver:
         self.nptx_padded = self.nptx + 2 * self.total_pad 
         self.nptz_padded = self.nptz + 2 * self.total_pad
 
-        # Model and interpolation
-        self._set_model(rho, vp, vs)
+        # Model
+        self.rho = rho 
+        self.vp = vp 
+        self.vs = vs
 
         # Dampling factors
         self._calc_dampling_factors()
 
-    def _set_model(self, rho, vp, vs):
+    def _set_model(self):
         """ Add padding to model parameters and interpolation them for
         stagerred grid finite difference method
         """
         # Padding
         pad = nn.ReplicationPad2d((self.total_pad,) * 4)
-        self.rho_padded = pad(rho[None, :]).squeeze()
-        self.vp_padded = pad(vp[None, :]).squeeze()
-        self.vs_padded = pad(vs[None, :]).squeeze()
+        rho_padded = pad(self.rho[None, :]).squeeze()
+        vp_padded = pad(self.vp[None, :]).squeeze()
+        vs_padded = pad(self.vs[None, :]).squeeze()
 
-        self.mu_padded = self.rho_padded * self.vs_padded**2
-        self.ld_padded = self.rho_padded * self.vp_padded**2 - 2 * self.mu_padded
+        mu_padded = rho_padded * vs_padded**2
+        ld_padded = rho_padded * vp_padded**2 - 2 * mu_padded
 
         # Interpolate
-        self.mu_padded_ihj = (self.mu_padded[:, :-1] + self.mu_padded[:, 1:]) / 2
-        self.mu_padded_ijh = (self.mu_padded[:-1, :] + self.mu_padded[1:, :]) / 2
-        self.ld_padded_ihj = (self.ld_padded[:, :-1] + self.ld_padded[:, 1:]) / 2
-        self.rho_padded_ihj = (self.rho_padded[:, :-1] + self.rho_padded[:, 1:]) / 2
-        self.rho_padded_ihjh = (self.rho_padded_ihj[:-1, :] + self.rho_padded_ihj[1:, :]) / 2
+        mu_padded_ihj = (mu_padded[:, :-1] + mu_padded[:, 1:]) / 2
+        mu_padded_ijh = (mu_padded[:-1, :] + mu_padded[1:, :]) / 2
+        ld_padded_ihj = (ld_padded[:, :-1] + ld_padded[:, 1:]) / 2
+        rho_padded_ihj = (rho_padded[:, :-1] + rho_padded[:, 1:]) / 2
+        rho_padded_ihjh = (rho_padded_ihj[:-1, :] + rho_padded_ihj[1:, :]) / 2
+
+        return rho_padded, rho_padded_ihjh, ld_padded_ihj, mu_padded_ihj, mu_padded_ijh
 
 
     def _calc_dampling_factors(self):
@@ -175,8 +178,12 @@ class Solver:
         cur_vy_x, cur_vy_y,
         cur_sxx_x, cur_sxx_y,
         cur_sxy_x, cur_sxy_y,
-        cur_syy_x, cur_syy_y
+        cur_syy_x, cur_syy_y,
+        rho_padded, rho_padded_ihjh,
+        ld_padded_ihj,
+        mu_padded_ihj, mu_padded_ijh,
         ):
+        
         num_shots = len(sources_xz)
 
         cur_vx = cur_vx_x + cur_vx_y 
@@ -189,42 +196,42 @@ class Solver:
         vy_y = self._vy_first_y_deriv(cur_vy)
 
         next_sxx_x = (
-            (self.ld_padded_ihj + 2 * self.mu_padded_ihj) * self.dt * vx_x 
+            (ld_padded_ihj + 2 * mu_padded_ihj) * self.dt * vx_x 
             + cur_sxx_x 
             - self.dt * self.dx_ihj * cur_sxx_x / 2
         )
         next_sxx_x /= (1 + self.dt * self.dx_ihj / 2)
 
         next_sxx_y = (
-            self.ld_padded_ihj * self.dt * vy_y 
+            ld_padded_ihj * self.dt * vy_y 
             + cur_sxx_y
             - self.dt * self.dy_ihj * cur_sxx_y / 2
         )
         next_sxx_y /= (1 + self.dt * self.dy_ihj / 2)
 
         next_syy_x = (
-            self.ld_padded_ihj * self.dt * vx_x 
+            ld_padded_ihj * self.dt * vx_x 
             + cur_syy_x
             - self.dt * self.dx_ihj * cur_syy_x / 2
         )
         next_syy_x /= (1 + self.dx_ihj * self.dt / 2)
 
         next_syy_y = (
-            (self.ld_padded_ihj + 2 * self.mu_padded_ihj) * self.dt * vy_y 
+            (ld_padded_ihj + 2 * mu_padded_ihj) * self.dt * vy_y 
             + cur_syy_y 
             - self.dt * self.dy_ihj * cur_syy_y / 2
         )
         next_syy_y /= (1 + self.dy_ihj * self.dt / 2)
 
         next_sxy_x = (
-            self.mu_padded_ijh * self.dt * vy_x 
+            mu_padded_ijh * self.dt * vy_x 
             + cur_sxy_x 
             - self.dt * self.dx_ijh * cur_sxy_x / 2
         )
         next_sxy_x /= (1 + self.dt * self.dx_ijh / 2)
 
         next_sxy_y = (
-            self.mu_padded_ijh * self.dt * vx_y 
+            mu_padded_ijh * self.dt * vx_y 
             + cur_sxy_y
             - self.dt * self.dy_ijh * cur_sxy_y / 2
         )
@@ -240,28 +247,28 @@ class Solver:
         syy_y = self._syy_first_y_deriv(next_syy)
 
         next_vx_x = (
-            self.dt * sxx_x / self.rho_padded
+            self.dt * sxx_x / rho_padded
             + cur_vx_x 
             - self.dx_ij * self.dt * cur_vx_x / 2
         ) 
         next_vx_x /= (1 + self.dt * self.dx_ij / 2)
 
         next_vx_y = ( 
-            self.dt * sxy_y / self.rho_padded
+            self.dt * sxy_y / rho_padded
             + cur_vx_y 
             - self.dy_ij * self.dt * cur_vx_y / 2
         )
         next_vx_y /= (1 + self.dt * self.dy_ij / 2)
 
         next_vy_x = ( 
-            self.dt *  sxy_x / self.rho_padded_ihjh
+            self.dt *  sxy_x / rho_padded_ihjh
             + cur_vy_x 
             - self.dt * self.dx_ihjh * cur_vy_x / 2
         )
         next_vy_x /= (1 + self.dt * self.dx_ihjh / 2)
 
         next_vy_y = (
-            self.dt * syy_y / self.rho_padded_ihjh
+            self.dt * syy_y / rho_padded_ihjh
             + cur_vy_y 
             - self.dt * self.dy_ihjh * cur_vy_y / 2
         )
@@ -286,7 +293,11 @@ class Solver:
             )
 
     def step(self, sources_xz):
-        sources_xz = sources_xz 
+        # Model 
+        assert torch.all(self.rho > 0) and torch.all(self.vp > 0) and torch.all(self.vs > 0)
+        assert not torch.any(torch.isnan(self.rho)) and not torch.any(torch.isnan(self.vp)) and not torch.any(torch.isnan(self.vs))
+        rho_padded, rho_padded_ihjh, ld_padded_ihj, mu_padded_ihj, mu_padded_ijh = self._set_model()
+
         # Stress and velocity
         num_shots = len(sources_xz)
         cur_vx_x = torch.zeros((num_shots, self.nptz_padded, self.nptx_padded), dtype=torch.float32, device=self.device)
@@ -311,7 +322,10 @@ class Solver:
                 cur_vy_x, cur_vy_y,
                 cur_sxx_x, cur_sxx_y,
                 cur_sxy_x, cur_sxy_y,
-                cur_syy_x, cur_syy_y
+                cur_syy_x, cur_syy_y,
+                rho_padded, rho_padded_ihjh,
+                ld_padded_ihj,
+                mu_padded_ihj, mu_padded_ijh,
             )
             next_vx, next_vy = state[0], state[1]
             actual_vx = next_vx[:, self.total_pad:-self.total_pad, self.total_pad:-self.total_pad]
