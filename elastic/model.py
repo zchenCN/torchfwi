@@ -21,7 +21,7 @@ def homogenenous(
 
 def square(
     nz, nx,
-    rho=2.0, vp=4.7, vs=3.5
+    rho=1.5, vp=4.0, vs=3.0
 ):
     rho = rho * np.ones((nz+1, nx+1), dtype=np.float32)
     rho[nz//4:3*nz//4, nx//4:3*nz//4] += 0.3
