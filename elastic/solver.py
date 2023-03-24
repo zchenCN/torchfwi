@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 def ricker(dt, nt, peak_time, dominant_freq):
     """Ricker wavelet with specific dominant frequency"""
     t = np.arange(-peak_time, dt * nt - peak_time, dt, dtype=np.float32)
